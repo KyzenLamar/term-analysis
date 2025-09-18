@@ -11,7 +11,7 @@ from term_analysis_core import (
     get_unmatched_sentences,
     export_results_to_csv,
 )
-from ml_semantic_search import load_wrong_usages, semantic_search
+# from ml_semantic_search import load_wrong_usages, semantic_search
 
 # ----------- BRANDING / DESIGN -------------
 st.markdown("""
@@ -97,6 +97,19 @@ st.markdown(
 
 # ---------- END BRANDING ------------
 
+# --- AI (семантика) — ледаче завантаження (коли користувач увімкне)
+from ml_semantic_search import load_wrong_usages, semantic_search
+
+@st.cache_resource(show_spinner=False)
+def load_ai_resources():
+    """
+    Завантажує модель + ембеддинги wrong_usage один раз, коли AI увімкнено.
+    """
+    wrong_csv_path = "all_generated_wrong_usages.csv"
+    wrong_sentences, wrong_terms, wrong_comments, wrong_embeds = load_wrong_usages(wrong_csv_path)
+    return wrong_sentences, wrong_terms, wrong_comments, wrong_embeds
+
+
 def highlight_term_in_sentence(sentence, term):
     if not sentence or not term:
         return sentence
@@ -124,13 +137,13 @@ def save_terms_dictionary_csv(terms, file_path):
             })
 
 # --- ML Semantic Search: Load model & data (один раз при старті!)
-@st.cache_resource
-def get_semantic_search_model():
-    wrong_csv_path = "all_generated_wrong_usages.csv"  # шлях до твого CSV з wrong_usage
-    wrong_sentences, wrong_terms, wrong_comments, wrong_embeds = load_wrong_usages(wrong_csv_path)
-    return wrong_sentences, wrong_terms, wrong_comments, wrong_embeds
-
-wrong_sentences, wrong_terms, wrong_comments, wrong_embeds = get_semantic_search_model()
+# @st.cache_resource
+# def get_semantic_search_model():
+#     wrong_csv_path = "all_generated_wrong_usages.csv"  # шлях до твого CSV з wrong_usage
+#     wrong_sentences, wrong_terms, wrong_comments, wrong_embeds = load_wrong_usages(wrong_csv_path)
+#     return wrong_sentences, wrong_terms, wrong_comments, wrong_embeds
+#
+# wrong_sentences, wrong_terms, wrong_comments, wrong_embeds = get_semantic_search_model()
 
 # ---- 1. Навігація між сторінками ----
 page = st.sidebar.radio("Сторінка", ["Аналіз документів", "Редактор словника"])
@@ -162,6 +175,8 @@ if page == "Аналіз документів":
         fuzzy_threshold = st.slider("Поріг fuzzy matching (Левенштейн)", 60, 100, 88)
         semantic_threshold = st.slider("Поріг Semantic Search (0.7-0.95)", 0.7, 0.95, 0.8, step=0.01)
         st.markdown("**Рекомендація:** 88 — оптимально для військових термінів")
+        ai_enabled = st.toggle("Увімкнути AI-пошук (повільніше)", value=False,
+                               help="Семантичний пошук на основі моделі з Hugging Face. Може завантажуватися довше на холодному старті.")
 
     # --- Завантаження/підвантаження словника
     if synonyms_file:
@@ -235,56 +250,64 @@ if page == "Аналіз документів":
             )
 
     # --- SEMANTIC SEARCH (AI пошук помилок) ---
-    st.subheader("🔎 Семантичний аналіз (AI пошук помилок):")
-    if unmatched_sentences:
-        semantic_results = []
-        with st.spinner("Проводимо семантичний аналіз..."):
-            for unmatched in unmatched_sentences:
-                sentence = unmatched["sentence"] if isinstance(unmatched, dict) else unmatched
-                page = unmatched["page"] if isinstance(unmatched, dict) else "-"
-                hits = semantic_search(
-                    sentence,
-                    wrong_sentences,
-                    wrong_terms,
-                    wrong_comments,
-                    wrong_embeds,
-                    topn=5,
-                    threshold=semantic_threshold
+    st.subheader("🔎 Семантичний аналіз (AI пошук помилок)")
+    if not ai_enabled:
+        st.info(
+            "AI-пошук вимкнено. Увімкни перемикач у сайдбарі, якщо хочеш доповнити rule-based перевірку семантичним аналізом.")
+    else:
+        st.caption("⚠️ Перший запуск може бути довшим — модель кешується.")
+        if unmatched_sentences:
+            with st.status(
+                    "Завантажуємо AI-ресурси (модель + ембеддинги). Це може зайняти 20–60 сек. на холодному старті…",
+                    expanded=True):
+                wrong_sentences, wrong_terms, wrong_comments, wrong_embeds = load_ai_resources()
+            semantic_results = []
+            with st.spinner("Проводимо семантичний аналіз…"):
+                for unmatched in unmatched_sentences:
+                    sentence = unmatched["sentence"] if isinstance(unmatched, dict) else unmatched
+                    page = unmatched["page"] if isinstance(unmatched, dict) else "-"
+                    hits = semantic_search(
+                        sentence,
+                        wrong_sentences,
+                        wrong_terms,
+                        wrong_comments,
+                        wrong_embeds,
+                        topn=5,
+                        threshold=semantic_threshold
+                    )
+                    if hits:
+                        for match in hits:
+                            semantic_results.append({
+                                "page": page,
+                                "sentence": sentence,
+                                "approved_term": match["approved_term"],
+                                "wrong_usage": match["wrong_usage"],
+                                "comment": match["comment"],
+                                "score": match["score"]
+                            })
+            if semantic_results:
+                st.success(f"Знайдено {len(semantic_results)} потенційних семантичних помилок!")
+                df_sem = pd.DataFrame(semantic_results)
+                st.dataframe(df_sem, use_container_width=True)
+                st.subheader("Виявлені AI-помилки (контексти):")
+                for _, row in df_sem.iterrows():
+                    st.markdown(
+                        f'<b>Сторінка:</b> <span style="color:#6A653A;font-weight:bold;">{row.get("page", "-")}</span> | '
+                        f'<b>Вхідне речення:</b> <span style="color:#1976d2">{row["sentence"]}</span><br>'
+                        f'<b>Схожий приклад помилки:</b> <span class="highlight-term">{row["wrong_usage"]}</span> '
+                        f'(<b>Термін:</b> {row["approved_term"]}, <b>Схожість:</b> <b>{row["score"]}</b>, <b>Коментар:</b> {row["comment"]})',
+                        unsafe_allow_html=True
+                    )
+                # Download CSV
+                csv_sem = df_sem.to_csv(index=False, encoding="utf-8")
+                st.download_button(
+                    label="⬇️ Завантажити AI semantic звіт (.csv)",
+                    data=csv_sem,
+                    file_name="ai_semantic_report.csv",
+                    mime="text/csv"
                 )
-                if hits:
-                    for match in hits:
-                        semantic_results.append({
-                            "page": page,
-                            "sentence": sentence,
-                            "approved_term": match["approved_term"],
-                            "wrong_usage": match["wrong_usage"],
-                            "comment": match["comment"],
-                            "score": match["score"]
-                        })
-        if semantic_results:
-            st.success(f"Знайдено {len(semantic_results)} потенційних семантичних помилок!")
-            df_sem = pd.DataFrame(semantic_results)
-            st.dataframe(df_sem, use_container_width=True)
-            # Візуалізація та підсвічення
-            st.subheader("Виявлені AI-помилки (контексти):")
-            for i, row in df_sem.iterrows():
-                st.markdown(
-                    f'<b>Сторінка:</b> <span style="color:#6A653A;font-weight:bold;">{row.get("page", "-")}</span> | '
-                    f'<b>Вхідне речення:</b> <span style="color:#1976d2">{row["sentence"]}</span><br>'
-                    f'<b>Схожий приклад помилки:</b> <span class="highlight-term">{row["wrong_usage"]}</span> '
-                    f'(<b>Термін:</b> {row["approved_term"]}, <b>Схожість:</b> <b>{row["score"]}</b>, <b>Коментар:</b> {row["comment"]})',
-                    unsafe_allow_html=True
-                )
-            # Download CSV
-            csv_sem = df_sem.to_csv(index=False, encoding="utf-8")
-            st.download_button(
-                label="⬇️ Завантажити AI semantic звіт (.csv)",
-                data=csv_sem,
-                file_name="ai_semantic_report.csv",
-                mime="text/csv"
-            )
-        else:
-            st.info("Семантичних помилок не виявлено на вибраному порозі.")
+            else:
+                st.info("Семантичних помилок не виявлено на вибраному порозі.")
 
     # Очищення тільки результатів
     if st.button("Очистити результати"):
