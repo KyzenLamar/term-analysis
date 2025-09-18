@@ -1,0 +1,5 @@
+term-analysis-embedder/
+fine_tuned_semantic_model_mnrl/
+.venv/
+__pycache__/
+.idea/

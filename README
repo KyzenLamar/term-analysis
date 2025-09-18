@@ -1,0 +1,58 @@
+# Term Analysis (Streamlit app)
+
+Веб-застосунок для аналізу документів (.docx/.pdf) на коректність використання військових термінів. 
+Підтримує rule-based пошук та семантичний пошук (SentenceTransformer), підсвічування виявлених фрагментів, 
+експорт звітів у CSV та inline-редагування словника.
+
+## 1) Фічі
+- Rule-based аналіз: пошук `approved_term`, `synonyms`, `wrong_usages` у тексті документа. :contentReference[oaicite:3]{index=3}
+- Семантичний аналіз (AI): пошук потенційних помилок через cosine similarity між реченнями документа та 
+  датасетом прикладів `wrong_usage`. :contentReference[oaicite:4]{index=4}
+- Підсвічування термів у контексті, завантаження/збереження CSV, дві сторінки в UI: 
+  **Аналіз документів** і **Редактор словника**. :contentReference[oaicite:5]{index=5}
+
+## 2) Структура проєкту
+project_root/
+├─ app_zsu_streamlit.py # Streamlit UI (2 сторінки) ← стартовий файл
+├─ term_analysis_core.py # Парсинг DOCX/PDF, rule-based аналіз
+├─ ml_semantic_search.py # Завантаження моделі, ембеддінги, семплер
+├─ fine_tuned_semantic_model_mnrl/ # Локальна SentenceTransformer модель
+├─ all_generated_wrong_usages.csv # Приклади некоректних вживань для AI-пошуку
+├─ volja-regular_w.ttf # (опційно) шрифт для бренд-стилю UI
+└─ README.md, requirements.txt
+
+markdown
+Copy code
+- Шрифт `volja-regular_w.ttf` підтягується стилями у UI; за відсутності — заміниться системним. :contentReference[oaicite:6]{index=6}
+
+## 3) Вимоги
+- Python 3.10+ (рекомендовано)
+- Пакети з `requirements.txt`:
+  - `streamlit`, `pandas` — інтерфейс і робота з CSV. :contentReference[oaicite:7]{index=7}
+  - `pdfplumber`, `python-docx` — парсинг PDF/DOCX. :contentReference[oaicite:8]{index=8}
+  - `sentence-transformers`, `torch`, `numpy` — семантичний пошук. :contentReference[oaicite:9]{index=9}
+
+> **Примітка про Torch:** для CPU достатньо `pip install torch`. Для GPU встановлюй Torch з офіційними інструкціями 
+> під твою версію CUDA.
+
+## 4) Підготовка даних
+- **Словник термінів (CSV)** — мінімальні колонки: 
+  `approved_term, synonyms, category, wrong_usages, context_examples` (списки розділяй `;`). 
+  Файл завантажується через UI на сторінці **Аналіз документів** або **Редактор словника**. :contentReference[oaicite:10]{index=10} :contentReference[oaicite:11]{index=11}
+- **Модель** — папка `fine_tuned_semantic_model_mnrl/` з валідною структурою Sentence-Transformers 
+  (`config.json`, ваги, `tokenizer.*`). Завантажується ось так: `SentenceTransformer(MODEL_PATH)`. :contentReference[oaicite:12]{index=12}
+- **Приклади помилок** — `all_generated_wrong_usages.csv` з колонками щонайменше `wrong_usage`, `approved_term` 
+  (опційно `comment`). Завантажується при старті UI для AI-аналізу. :contentReference[oaicite:13]{index=13} :contentReference[oaicite:14]{index=14}
+
+## 5) Установка та запуск
+```bash
+# 1) (опційно) створити venv
+python -m venv .venv
+. .venv/Scripts/activate    # Windows
+# source .venv/bin/activate # macOS/Linux
+
+# 2) Встановити залежності
+pip install -r requirements.txt
+
+# 3) Запустити застосунок
+streamlit run app_zsu_streamlit.py
